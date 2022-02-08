@@ -29,15 +29,23 @@ uintptr_t GetModuleBaseAddress(TCHAR* lpszModuleName, DWORD pID) {
     return dwModuleBaseAddress;
 }
 
-uintptr_t FindDMAAddy(uintptr_t ptr, std::vector<unsigned int> offsets)
+DWORD FindDMAAddyEx(HANDLE hProc, DWORD ptr, std::vector<unsigned int> offsets)
 {
-    uintptr_t addr = ptr;
     for (unsigned int i = 0; i < offsets.size(); ++i)
     {
-        addr = *(uintptr_t*)addr;
-        addr += offsets[i];
+        ReadProcessMemory(hProc, (BYTE*)ptr, &ptr, sizeof(ptr), 0);
+        ptr += offsets[i];
     }
-    return addr;
+    return ptr;
+}
+uintptr_t FindDMAAddyEx(HANDLE hProc, uintptr_t ptr, std::vector<unsigned int> offsets)
+{
+    for (unsigned int i = 0; i < offsets.size(); ++i)
+    {
+        ReadProcessMemory(hProc, (BYTE*)ptr, &ptr, sizeof(ptr), 0);
+        ptr += offsets[i];
+    }
+    return ptr;
 }
 
 
@@ -50,9 +58,74 @@ int WriteMem(HANDLE phandle, void* address, int value, size_t sIze, DWORD memPro
     return 0;
 }
 
+
+//Internal Pattern Scan
+void* PatternScan(char* base, size_t size, const char* pattern, const char* mask)
+{
+    size_t patternLength = strlen(mask);
+
+    for (unsigned int i = 0; i < size - patternLength; i++)
+    {
+        bool found = true;
+        for (unsigned int j = 0; j < patternLength; j++)
+        {
+            if (mask[j] != '?' && pattern[j] != *(base + i + j))
+            {
+                found = false;
+                break;
+            }
+        }
+        if (found)
+        {
+            return (void*)(base + i);
+        }
+    }
+    //cout << "not found " << endl;
+    return nullptr;
+}
+
+//External Wrapper
+void* PatternScanEx(HANDLE hProcess, uintptr_t begin, uintptr_t end, const char* pattern, const char* mask)
+{
+    uintptr_t currentChunk = begin;
+    SIZE_T bytesRead;
+
+    while (currentChunk < end)
+    {
+        char buffer[4096];
+
+        DWORD oldprotect;
+        VirtualProtectEx(hProcess, (void*)currentChunk, sizeof(buffer), PAGE_EXECUTE_READWRITE, &oldprotect);
+        ReadProcessMemory(hProcess, (void*)currentChunk, &buffer, sizeof(buffer), &bytesRead);
+        VirtualProtectEx(hProcess, (void*)currentChunk, sizeof(buffer), oldprotect, &oldprotect);
+        std::cout << buffer << std::endl;
+
+        if (bytesRead == 0)
+        {
+            return nullptr;
+        }
+
+        void* internalAddress = PatternScan((char*)&buffer, bytesRead, pattern, mask);
+
+        if (internalAddress != nullptr)
+        {
+            //calculate from internal to external
+            uintptr_t offsetFromBuffer = (uintptr_t)internalAddress - (uintptr_t)&buffer;
+            return (void*)(currentChunk + offsetFromBuffer);
+        }
+        else
+        {
+            //advance to next chunk
+            currentChunk = currentChunk + bytesRead;
+        }
+    }
+    return nullptr;
+}
+
 int main()
 {
     HWND hwnd = FindWindowA(NULL, "Dota 2");
+    //HWND hwnd = FindWindowA(NULL, "Player");
     if (hwnd != NULL) {
         cout << "Window found!\n";
 
@@ -69,23 +142,33 @@ int main()
             cout << "Success!" << endl;
 
 
-            char gamemodule[] = "client.dll";
-            uintptr_t clientDll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
-            cout << std::hex << clientDll << endl;
+            char gamemodule[] = "engine2.dll";
+            //char gamemodule[] = "Player.exe";
+            //uintptr_t clientDll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
+            uintptr_t engine2Dll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
+            //DWORD clientDll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
+            cout << std::hex << engine2Dll << endl;
 
             // адрес куда писать значние
-            //uintptr_t finalAddr = FindDMAAddy(static_cast<uintptr_t>(clientDll) + 0x03752868, { 0xFF8 });
+            //DWORD finalAddr = FindDMAAddyEx(phandle, (clientDll + 0x0000C018), { 0x78 });
 
-            uintptr_t finalAddr = clientDll + 0x375F988;
+            //uintptr_t finalAddr = clientDll + 0x375F988;
 
             int weather;
-            int write = 0;
-            ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
-            cout << std::dec << weather << endl;
+            int write = 2;
+            //ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
+            //cout << std::dec << weather << endl;
       
-            WriteMem(phandle, (void*)finalAddr, write, sizeof(int), PAGE_EXECUTE_READWRITE);
-            ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
-            cout << std::dec << weather << endl;
+            //WriteMem(phandle, (void*)finalAddr, write, sizeof(int), PAGE_EXECUTE_READWRITE);
+            //ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
+            //cout << std::dec << weather << endl;
+
+            // pattern scanning
+            LPCSTR pattern = "\xE8\x00\x00\x00\x00\x33\xD2\x48\x8B\xC7";
+            LPCSTR mask = "x????xxxxx";
+            uintptr_t end = 0x00007fff35f43000;
+            LPVOID PlayerStructBase = PatternScanEx(phandle, engine2Dll, end, pattern, mask);
+            cout << std::hex << PlayerStructBase << endl;
         }
     }
     else {
