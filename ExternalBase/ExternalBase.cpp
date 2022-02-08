@@ -7,8 +7,8 @@
 
 using namespace std;
 
-DWORD GetModuleBaseAddress(TCHAR* lpszModuleName, DWORD pID) {
-    DWORD dwModuleBaseAddress = 0;
+uintptr_t GetModuleBaseAddress(TCHAR* lpszModuleName, DWORD pID) {
+    uintptr_t dwModuleBaseAddress = 0;
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pID); // make snapshot of all modules within process
     MODULEENTRY32 ModuleEntry32 = { 0 };
     ModuleEntry32.dwSize = sizeof(MODULEENTRY32);
@@ -18,7 +18,7 @@ DWORD GetModuleBaseAddress(TCHAR* lpszModuleName, DWORD pID) {
         do {
             if (_tcscmp(ModuleEntry32.szModule, lpszModuleName) == 0) // if Found Module matches Module we look for -> done!
             {
-                dwModuleBaseAddress = (DWORD)ModuleEntry32.modBaseAddr;
+                dwModuleBaseAddress = (uintptr_t)ModuleEntry32.modBaseAddr;
                 break;
             }
         } while (Module32Next(hSnapshot, &ModuleEntry32)); // go through Module entries in Snapshot and store in ModuleEntry32
@@ -69,23 +69,23 @@ int main()
             cout << "Success!" << endl;
 
 
-            //char gamemodule[] = "cheatengine-x86_64.exe";
             char gamemodule[] = "client.dll";
-            DWORD clientDll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
+            uintptr_t clientDll = GetModuleBaseAddress(_T(gamemodule), pid);  // многобайтовая кодировка
             cout << std::hex << clientDll << endl;
 
             // адрес куда писать значние
-            //client.dll+375F988
             //uintptr_t finalAddr = FindDMAAddy(static_cast<uintptr_t>(clientDll) + 0x03752868, { 0xFF8 });
-           DWORD finalAddr = clientDll + 0x375F988;
+
+            uintptr_t finalAddr = clientDll + 0x375F988;
 
             int weather;
+            int write = 0;
             ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
-            cout << std::hex << weather << endl;
+            cout << std::dec << weather << endl;
       
-            WriteMem(phandle, (void*)finalAddr, 9, sizeof(int), PAGE_EXECUTE_READWRITE);
+            WriteMem(phandle, (void*)finalAddr, write, sizeof(int), PAGE_EXECUTE_READWRITE);
             ReadProcessMemory(phandle, (LPCVOID)(finalAddr), &weather, sizeof(int), nullptr);
-            cout << std::hex << weather << endl;
+            cout << std::dec << weather << endl;
         }
     }
     else {
